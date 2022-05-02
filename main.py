@@ -8,10 +8,15 @@ from thop import profile, clever_format
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from torch.utils.tensorboard import SummaryWriter
+
 import utils
 from model import Model
 
 import torchvision
+
+
+writer = SummaryWriter()
 
 if torch.cuda.is_available():
     torch.backends.cudnn.benchmark = True
@@ -26,7 +31,10 @@ def off_diagonal(x):
 def train(net, data_loader, train_optimizer):
     net.train()
     total_loss, total_num, train_bar = 0.0, 0, tqdm(data_loader)
-    for data_tuple in train_bar:
+
+    train_length = len(train_bar)
+
+    for ctr, data_tuple in enumerate(train_bar):
         (pos_1, pos_2), _ = data_tuple
         pos_1, pos_2 = pos_1.cuda(non_blocking=True), pos_2.cuda(non_blocking=True)
         feature_1, out_1 = net(pos_1)
@@ -63,6 +71,13 @@ def train(net, data_loader, train_optimizer):
             off_corr = -1
         else:
             off_corr = 0
+
+        writer.add_scalar('iter_loss', loss.item(), ctr + epoch * train_length)
+        writer.add_scalar('iter_loss_finetuned', total_loss / total_num, ctr + epoch * train_length)
+        writer.add_scalar('on_diag', on_diag.item(), ctr + epoch * train_length)
+        writer.add_scalar('off_diag', off_diag.item(), ctr + epoch * train_length)
+
+
         train_bar.set_description('Train Epoch: [{}/{}] Loss: {:.4f} off_corr:{} lmbda:{:.4f} bsz:{} f_dim:{} dataset: {}'.format(\
                                 epoch, epochs, total_loss / total_num, off_corr, lmbda, batch_size, feature_dim, dataset))
     return total_loss / total_num
@@ -194,11 +209,14 @@ if __name__ == '__main__':
     best_acc = 0.0
     for epoch in range(1, epochs + 1):
         train_loss = train(model, train_loader, optimizer)
+        writer.add_scalar('Epoch Loss', train_loss, epoch)
         if epoch % 5 == 0:
             results['train_loss'].append(train_loss)
             test_acc_1, test_acc_5 = test(model, memory_loader, test_loader)
             results['test_acc@1'].append(test_acc_1)
             results['test_acc@5'].append(test_acc_5)
+            writer.add_scalar('Top 1', test_acc_1, epoch)
+            writer.add_scalar('Top 5', test_acc_5, epoch)
             # save statistics
             data_frame = pd.DataFrame(data=results, index=range(5, epoch + 1, 5))
             data_frame.to_csv('results/{}_statistics.csv'.format(save_name_pre), index_label='epoch')
